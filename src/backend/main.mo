@@ -1,199 +1,277 @@
 import Text "mo:core/Text";
-import Array "mo:core/Array";
 import Map "mo:core/Map";
 import Principal "mo:core/Principal";
 import Runtime "mo:core/Runtime";
-import Order "mo:core/Order";
+import Nat "mo:core/Nat";
 
 import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
 
 actor {
-  // Initialize the access control state
-  let accessControlState = AccessControl.initState();
 
+  // ─── Legacy stable state (kept for upgrade compatibility) ─────────────────────
+  let accessControlState = AccessControl.initState();
   include MixinAuthorization(accessControlState);
 
-  public type Registration = {
-    username : Text;
-    password : Text;
-    role : AccessControl.UserRole;
-  };
-
-  public type UserProfile = {
-    principal : Principal;
-    username : Text;
-    role : AccessControl.UserRole;
-  };
-
-  // User profiles store mapping from usernames to profiles
-  // For this example, re-registering an existing username will overwrite the existing profile
-  let registrations = Map.empty<Text, Registration>();
-
+  type LegacyRole = { #admin; #user; #guest };
+  type LegacyRegistration = { username : Text; password : Text; role : LegacyRole };
+  let registrations = Map.empty<Text, LegacyRegistration>();
   var firstRun = true;
 
-  module Registration {
-    public func compare(a : Registration, b : Registration) : Order.Order {
-      Text.compare(a.username, b.username);
-    };
+  // ─── User Types ─────────────────────────────────────────────────────────────
+
+  public type UserRole = {
+    #superAdmin;
+    #admin;
+    #dataOperator;
+    #employee;
   };
 
-  public shared ({ caller }) func register(username : Text, password : Text, role : AccessControl.UserRole) : async () {
-    if (not AccessControl.isAdmin(accessControlState, caller)) {
-      Runtime.trap("Only admins can register new users with a custom role");
-    };
-
-    let registration : Registration = {
-      username;
-      password;
-      role;
-    };
-    registrations.add(username, registration);
+  type UserRecord = {
+    username : Text;
+    password : Text;
+    name     : Text;
+    phone    : Text;
+    role     : UserRole;
   };
 
-  // Validates a single Registration and returns a UserProfile if password matches
-  func validateRegistration(registration : Registration, password : Text) : ?UserProfile {
-    if (registration.password == password) {
-      ?{
-        principal = Principal.fromText(registration.username);
-        username = registration.username;
-        role = registration.role;
-      };
-    } else {
-      null;
-    };
+  public type UserInfo = {
+    username : Text;
+    name     : Text;
+    phone    : Text;
+    role     : UserRole;
   };
 
-  // Authenticates a user by username and password
-  // Returns a UserProfile if username exists and password matches, otherwise returns null
-  // NOTE: This function intentionally has no authorization check as it's used for login
-  // However, it should be rate-limited in production to prevent brute force attacks
-  public query func authenticate(username : Text, password : Text) : async ?UserProfile {
-    switch (registrations.get(username)) {
+  // ─── Employee Types ─────────────────────────────────────────────────────────
+
+  public type EmployeeInfo = {
+    id     : Nat;
+    name   : Text;
+    phone  : Text;
+    role   : Text;
+    salary : Nat;
+  };
+
+  // ─── State ──────────────────────────────────────────────────────────────────
+
+  let users     = Map.empty<Text, UserRecord>();
+  let employees = Map.empty<Nat, EmployeeInfo>();
+  var nextEmpId : Nat = 1;
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  func isAdminRole(role : UserRole) : Bool {
+    role == #superAdmin or role == #admin;
+  };
+
+  func canManageEmployees(role : UserRole) : Bool {
+    role == #superAdmin or role == #admin or role == #dataOperator;
+  };
+
+  func authUser(username : Text, password : Text) : ?UserRecord {
+    switch (users.get(username)) {
       case (null) { null };
-      case (?registration) {
-        validateRegistration(registration, password);
+      case (?u) { if (u.password == password) { ?u } else { null } };
+    };
+  };
+
+  func toInfo(u : UserRecord) : UserInfo {
+    { username = u.username; name = u.name; phone = u.phone; role = u.role };
+  };
+
+  // ─── User API ────────────────────────────────────────────────────────────────
+
+  public query func authenticate(username : Text, password : Text) : async ?UserInfo {
+    switch (authUser(username, password)) {
+      case (null) { null };
+      case (?u)   { ?toInfo(u) };
+    };
+  };
+
+  public query func listUsers(requesterUsername : Text, requesterPassword : Text) : async [UserInfo] {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not isAdminRole(req.role)) { Runtime.trap("Unauthorized") };
+        users.values().toArray().map(toInfo);
       };
     };
   };
 
-  /* First motoko lineup: admin - admin admin, operator - operator - user, employee - employee-guest */
-  public shared ({ caller }) func initializeActorAdmin() : async () {
-    if (firstRun) {
-      firstRun := false;
-      let admin = {
-        username = "admin";
-        password = "admin";
-        role = #admin;
-      };
-      let operator = {
-        username = "operator";
-        password = "operator";
-        role = #user;
-      };
-      let employee = {
-        username = "employee";
-        password = "employee";
-        role = #guest;
-      };
-      registrations.add("admin", admin);
-      registrations.add("operator", operator);
-      registrations.add("employee", employee);
-    };
-  };
-
-  public query ({ caller }) func getCallerUserProfile() : async UserProfile {
-    // Only authenticated users (at least #user role) can get their profile
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only authenticated users can view their profile");
-    };
-
-    // Fetch the username from the principal
-    let principal = caller.toText();
-    let username = principal;
-
-    // Check if user is registered
-    switch (registrations.get(username)) {
-      case (null) { Runtime.trap("User not registered") };
-      case (?registration) {
-        {
-          principal = caller;
-          username;
-          role = registration.role;
+  public shared func createUser(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    username : Text,
+    password : Text,
+    name     : Text,
+    phone    : Text,
+    role     : UserRole,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not isAdminRole(req.role)) { Runtime.trap("Unauthorized") };
+        switch (users.get(username)) {
+          case (?_) { Runtime.trap("Username already exists") };
+          case (null) {
+            users.add(username, { username; password; name; phone; role });
+          };
         };
       };
     };
   };
 
-  public query ({ caller }) func getUserProfile(user : Principal) : async UserProfile {
-    if (caller != user and not AccessControl.isAdmin(accessControlState, caller)) {
-      Runtime.trap("Unauthorized: Can only view your own profile");
-    };
-    let principal = user.toText();
-    let username = principal;
-    switch (registrations.get(username)) {
-      case (null) { Runtime.trap("User not registered") };
-      case (?registration) {
-        {
-          principal = user;
-          username;
-          role = registration.role;
+  public shared func updateUser(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    username : Text,
+    name     : Text,
+    phone    : Text,
+    role     : UserRole,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not isAdminRole(req.role)) { Runtime.trap("Unauthorized") };
+        switch (users.get(username)) {
+          case (null) { Runtime.trap("User not found") };
+          case (?u) {
+            users.add(username, { username; password = u.password; name; phone; role });
+          };
         };
       };
     };
   };
 
-  public query ({ caller }) func getAllProfiles() : async [UserProfile] {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Only admins can list all users");
-    };
-    let registrationsArray = registrations.values().toArray();
-    registrationsArray.map(func(registration) { validateRegistration(registration, registration.password) }).filter(func(x) { x != null }).map(func(x) { switch (x) { case (null) { Runtime.trap("Unreachable") }; case (?userProfile) { userProfile } } });
-  };
-
-  public query ({ caller }) func getAllRegistrationsSorted() : async [Registration] {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
-      Runtime.trap("Unauthorized: Only admins can list all users");
-    };
-    registrations.values().toArray().sort();
-  };
-
-  public query ({ caller }) func listAllUserProfiles() : async [UserProfile] {
-    let callerRole = AccessControl.getUserRole(accessControlState, caller);
-
-    switch (callerRole) {
-      case (#admin) {
-        // Admins can see all users
-        let registrationsArray = registrations.values().toArray();
-        registrationsArray.map(func(registration) { validateRegistration(registration, registration.password) }).filter(func(x) { x != null }).map(func(x) { switch (x) { case (null) { Runtime.trap("Unreachable") }; case (?userProfile) { userProfile } } });
-      };
-      case (#user) {
-        // Operators (users) can see limited info about all users (username and role only)
-        // For this implementation, they see all profiles
-        let registrationsArray = registrations.values().toArray();
-        registrationsArray.map(func(registration) { validateRegistration(registration, registration.password) }).filter(func(x) { x != null }).map(func(x) { switch (x) { case (null) { Runtime.trap("Unreachable") }; case (?userProfile) { userProfile } } });
-      };
-      case (#guest) {
-        // Employees (guests) can only see themselves
-        let callerUsername = caller.toText();
-        let registrationsArray = registrations.values().toArray();
-        registrationsArray.map(
-          func(registration) {
-            if (registration.username == callerUsername) {
-              validateRegistration(registration, registration.password);
-            } else {
-              null;
-            };
-          }
-        ).filter(func(x) { x != null }).map(func(x) { switch (x) { case (null) { Runtime.trap("Unreachable") }; case (?userProfile) { userProfile } } });
+  public shared func deleteUser(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    username : Text,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not isAdminRole(req.role)) { Runtime.trap("Unauthorized") };
+        if (username == requesterUsername) { Runtime.trap("Cannot delete yourself") };
+        users.remove(username);
       };
     };
   };
 
-  // Verify user well-formedness predicate
-  func verifyUserWellformednessPredicate(proxyUser : Principal, user : Registration) : () {
-    if (proxyUser.toText() != user.username) {
-      Runtime.trap("Username must match principal text representation");
+  public shared func changePassword(
+    username    : Text,
+    oldPassword : Text,
+    newPassword : Text,
+  ) : async () {
+    switch (authUser(username, oldPassword)) {
+      case (null) { Runtime.trap("Current password is incorrect") };
+      case (?u) {
+        users.add(username, { u with password = newPassword });
+      };
+    };
+  };
+
+  public shared func resetPassword(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    targetUsername    : Text,
+    newPassword       : Text,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not isAdminRole(req.role)) { Runtime.trap("Unauthorized") };
+        switch (users.get(targetUsername)) {
+          case (null) { Runtime.trap("User not found") };
+          case (?u) {
+            users.add(targetUsername, { u with password = newPassword });
+          };
+        };
+      };
+    };
+  };
+
+  public shared func initializeDefaults() : async () {
+    let defaults : [(Text, Text, Text, Text, UserRole)] = [
+      ("superadmin", "super123", "Super Admin",   "", #superAdmin),
+      ("admin",      "admin123", "Administrator",  "", #admin),
+      ("operator",   "op123",    "Data Operator",  "", #dataOperator),
+      ("employee",   "emp123",   "Employee User",  "", #employee),
+    ];
+    for ((username, password, name, phone, role) in defaults.vals()) {
+      switch (users.get(username)) {
+        case (?u) { users.add(username, { u with password }) };
+        case (null) {
+          users.add(username, { username; password; name; phone; role });
+        };
+      };
+    };
+  };
+
+  // ─── Employee API ────────────────────────────────────────────────────────────
+
+  public query func listEmployees(
+    requesterUsername : Text,
+    requesterPassword : Text,
+  ) : async [EmployeeInfo] {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?_)   { employees.values().toArray() };
+    };
+  };
+
+  public shared func addEmployee(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    name   : Text,
+    phone  : Text,
+    role   : Text,
+    salary : Nat,
+  ) : async Nat {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
+        let id = nextEmpId;
+        nextEmpId += 1;
+        employees.add(id, { id; name; phone; role; salary });
+        id;
+      };
+    };
+  };
+
+  public shared func updateEmployee(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    id     : Nat,
+    name   : Text,
+    phone  : Text,
+    role   : Text,
+    salary : Nat,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
+        switch (employees.get(id)) {
+          case (null) { Runtime.trap("Employee not found") };
+          case (?_)   { employees.add(id, { id; name; phone; role; salary }) };
+        };
+      };
+    };
+  };
+
+  public shared func deleteEmployee(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    id : Nat,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
+        employees.remove(id);
+      };
     };
   };
 };
