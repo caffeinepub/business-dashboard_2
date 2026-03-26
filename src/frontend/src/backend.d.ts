@@ -20,6 +20,17 @@ export interface EmployeeInfo {
   salary: bigint;
 }
 
+export type InquiryStatus = { new_: null } | { followUp: null } | { closed: null };
+
+export interface InquiryInfo {
+  id: bigint;
+  name: string;
+  phone: string;
+  requirement: string;
+  status: InquiryStatus;
+  createdAt: bigint;
+}
+
 export interface backendInterface {
   _initializeAccessControlWithSecret(adminToken: string): Promise<void>;
   authenticate(username: string, password: string): Promise<UserInfo | null>;
@@ -77,6 +88,25 @@ export interface backendInterface {
     salary: bigint
   ): Promise<void>;
   deleteEmployee(
+    requesterUsername: string,
+    requesterPassword: string,
+    id: bigint
+  ): Promise<void>;
+  listInquiries(requesterUsername: string, requesterPassword: string): Promise<Array<InquiryInfo>>;
+  addInquiry(
+    requesterUsername: string,
+    requesterPassword: string,
+    name: string,
+    phone: string,
+    requirement: string
+  ): Promise<bigint>;
+  updateInquiryStatus(
+    requesterUsername: string,
+    requesterPassword: string,
+    id: bigint,
+    status: InquiryStatus
+  ): Promise<void>;
+  deleteInquiry(
     requesterUsername: string,
     requesterPassword: string,
     id: bigint

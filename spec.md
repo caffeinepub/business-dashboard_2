@@ -1,28 +1,27 @@
 # Business Dashboard
 
 ## Current State
-Full-stack app with login, user management (CRUD), role-based access (superAdmin, admin, dataOperator, employee), settings/password change. Backend: Motoko with authenticate, listUsers, createUser, updateUser, deleteUser, changePassword, resetPassword, initializeDefaults.
+- Login system with 4 roles: Super Admin, Admin, Data Operator, Employee
+- User management (CRUD, password reset)
+- Employee management (CRUD: name, phone, role, salary)
+- All features connected to backend with session-based auth (username/password passed per call)
 
 ## Requested Changes (Diff)
 
 ### Add
-- Employee Management module: add, edit, delete, list employees
-- Employee fields: name (Text), phone (Text), role (Text - job title), salary (Nat)
-- Backend: EmployeeRecord type, addEmployee, updateEmployee, deleteEmployee, listEmployees functions
-- Frontend: "Employee Management" page accessible to superAdmin, admin, dataOperator; employees can view only
-- Nav link for Employee Management in sidebar
+- CRM module: Customer Inquiries
+  - Fields: id, name, phone, requirement, status (New | Follow-up | Closed), createdAt (timestamp)
+  - Backend: addInquiry, listInquiries, updateInquiryStatus, deleteInquiry
+  - Frontend: "CRM" sidebar item, inquiry list table, add inquiry form/dialog, status badge, status update action
 
 ### Modify
-- backend main.mo: add Employee state and CRUD functions
-- backend.d.ts: add EmployeeInfo interface and new function signatures
-- App.tsx: add EmployeeManagementPage component and nav link
+- App.tsx: add CRM page/section to the sidebar and routing
 
 ### Remove
 - Nothing removed
 
 ## Implementation Plan
-1. Add EmployeeRecord/EmployeeInfo types to backend, auto-increment ID
-2. Add listEmployees (authenticated), addEmployee, updateEmployee, deleteEmployee (admin/dataOperator+)
-3. Update backend.d.ts with EmployeeInfo and new methods
-4. Add EmployeeManagementPage to App.tsx with table, add/edit/delete dialogs
-5. Add "Employees" nav item visible to superAdmin, admin, dataOperator
+1. Add InquiryStatus variant and InquiryInfo type to backend
+2. Add inquiry Map and nextInquiryId counter to backend state
+3. Implement addInquiry, listInquiries, updateInquiryStatus, deleteInquiry backend functions
+4. Update frontend: add CRM page with inquiry list, add inquiry dialog, status badges, update/delete actions

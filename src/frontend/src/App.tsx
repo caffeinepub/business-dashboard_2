@@ -45,14 +45,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { useActor } from "@/hooks/useActor";
 import {
+  BarChart2,
   Briefcase,
+  CalendarCheck,
   KeyRound,
   LayoutDashboard,
   Loader2,
   LogOut,
   Menu,
+  MessageSquare,
   Pencil,
   Settings,
   Trash2,
@@ -111,7 +115,14 @@ interface Session {
   password: string;
 }
 
-type Page = "dashboard" | "users" | "settings" | "employees";
+type Page =
+  | "dashboard"
+  | "users"
+  | "settings"
+  | "employees"
+  | "crm"
+  | "attendance"
+  | "reports";
 
 // ── Employee types ───────────────────────────────────────────────────────────
 interface EmployeeInfo {
@@ -122,7 +133,104 @@ interface EmployeeInfo {
   salary: bigint;
 }
 
+// ── CRM types ───────────────────────────────────────────────────────────────
+type InquiryStatus = { new_: null } | { followUp: null } | { closed: null };
+
+interface InquiryInfo {
+  id: bigint;
+  name: string;
+  phone: string;
+  requirement: string;
+  status: InquiryStatus;
+  createdAt: bigint;
+}
+
+function inquiryStatusLabel(status: InquiryStatus): string {
+  if ("new_" in status) return "New";
+  if ("followUp" in status) return "Follow-up";
+  return "Closed";
+}
+
+function inquiryStatusClass(status: InquiryStatus): string {
+  if ("new_" in status)
+    return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
+  if ("followUp" in status)
+    return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
+  return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+}
+
+function InquiryStatusBadge({ status }: { status: InquiryStatus }) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${inquiryStatusClass(status)}`}
+    >
+      {inquiryStatusLabel(status)}
+    </span>
+  );
+}
+
+function statusKey(status: InquiryStatus): string {
+  if ("new_" in status) return "new_";
+  if ("followUp" in status) return "followUp";
+  return "closed";
+}
+
+function statusFromKey(key: string): InquiryStatus {
+  if (key === "new_") return { new_: null };
+  if (key === "followUp") return { followUp: null };
+  return { closed: null };
+}
+
 // ── Login Page ───────────────────────────────────────────────────────────────
+
+// ── Attendance Placeholder Page ──────────────────────────────────────────────
+function AttendancePage() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Attendance</h1>
+        <p className="text-muted-foreground">
+          Track employee check-in and check-out
+        </p>
+      </div>
+      <Card
+        data-ocid="attendance.coming_soon.card"
+        className="flex flex-col items-center justify-center py-16"
+      >
+        <CalendarCheck className="h-12 w-12 text-muted-foreground mb-4" />
+        <h2 className="text-xl font-semibold mb-2">Coming Soon</h2>
+        <p className="text-muted-foreground text-sm text-center max-w-xs">
+          Attendance tracking with check-in / check-out and monthly reports will
+          be available soon.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+// ── Reports Placeholder Page ──────────────────────────────────────────────────
+function ReportsPage() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Reports</h1>
+        <p className="text-muted-foreground">Business analytics and insights</p>
+      </div>
+      <Card
+        data-ocid="reports.coming_soon.card"
+        className="flex flex-col items-center justify-center py-16"
+      >
+        <BarChart2 className="h-12 w-12 text-muted-foreground mb-4" />
+        <h2 className="text-xl font-semibold mb-2">Coming Soon</h2>
+        <p className="text-muted-foreground text-sm text-center max-w-xs">
+          Detailed reports on employees, attendance, and CRM leads will be
+          available soon.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
 function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) {
   const { actor, isFetching } = useActor();
   const [username, setUsername] = useState("");
@@ -335,6 +443,9 @@ function NavLinks({
         {navItem("dashboard", "Dashboard", LayoutDashboard)}
         {canManageUsers && navItem("users", "User Management", Users)}
         {navItem("employees", "Employees", Briefcase)}
+        {navItem("attendance", "Attendance", CalendarCheck)}
+        {navItem("crm", "CRM", MessageSquare)}
+        {navItem("reports", "Reports", BarChart2)}
         {navItem("settings", "Settings", Settings)}
       </nav>
       <Separator className="bg-sidebar-border" />
@@ -358,6 +469,29 @@ function NavLinks({
 
 // ── Dashboard Page ───────────────────────────────────────────────────────────
 function DashboardPage({ session }: { session: Session }) {
+  const { actor, isFetching } = useActor();
+  const [employeeCount, setEmployeeCount] = useState<number | null>(null);
+  const [leadCount, setLeadCount] = useState<number | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!actor || isFetching) return;
+    setStatsLoading(true);
+    Promise.all([
+      (actor as any).listEmployees(session.userInfo.username, session.password),
+      (actor as any).listInquiries(session.userInfo.username, session.password),
+    ])
+      .then(([emps, inquiries]: [any[], any[]]) => {
+        setEmployeeCount(emps.length);
+        setLeadCount(inquiries.length);
+      })
+      .catch(() => {
+        setEmployeeCount(0);
+        setLeadCount(0);
+      })
+      .finally(() => setStatsLoading(false));
+  }, [actor, isFetching, session]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -366,6 +500,60 @@ function DashboardPage({ session }: { session: Session }) {
           Welcome back, {session.userInfo.name}!
         </p>
       </div>
+
+      {/* Stats Cards */}
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+        <Card data-ocid="dashboard.employees.card">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Employees
+            </CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {statsLoading ? (
+              <Loader2
+                className="h-5 w-5 animate-spin text-muted-foreground"
+                data-ocid="dashboard.employees.loading_state"
+              />
+            ) : (
+              <p className="text-3xl font-bold">{employeeCount ?? "—"}</p>
+            )}
+          </CardContent>
+        </Card>
+        <Card data-ocid="dashboard.leads.card">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Leads
+            </CardTitle>
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {statsLoading ? (
+              <Loader2
+                className="h-5 w-5 animate-spin text-muted-foreground"
+                data-ocid="dashboard.leads.loading_state"
+              />
+            ) : (
+              <p className="text-3xl font-bold">{leadCount ?? "—"}</p>
+            )}
+          </CardContent>
+        </Card>
+        <Card data-ocid="dashboard.attendance.card">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Today's Attendance
+            </CardTitle>
+            <CalendarCheck className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-bold">0</p>
+            <p className="text-xs text-muted-foreground mt-1">Coming Soon</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Profile Info */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Card data-ocid="dashboard.role.card">
           <CardHeader>
@@ -430,7 +618,6 @@ function UserManagementPage({ session }: { session: Session }) {
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Dialogs
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -1264,6 +1451,329 @@ function EmployeeFormFields({
   );
 }
 
+// ── CRM Page ─────────────────────────────────────────────────────────────────
+type InquiryFormState = {
+  name: string;
+  phone: string;
+  requirement: string;
+};
+
+function defaultInquiryForm(): InquiryFormState {
+  return { name: "", phone: "", requirement: "" };
+}
+
+function CRMPage({ session }: { session: Session }) {
+  const { actor } = useActor();
+  const [inquiries, setInquiries] = useState<InquiryInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [form, setForm] = useState<InquiryFormState>(defaultInquiryForm());
+  const [deleteTarget, setDeleteTarget] = useState<InquiryInfo | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [updatingId, setUpdatingId] = useState<bigint | null>(null);
+
+  const loadInquiries = useCallback(async () => {
+    if (!actor) return;
+    setLoading(true);
+    try {
+      const list = await (actor as any).listInquiries(
+        session.userInfo.username,
+        session.password,
+      );
+      setInquiries(list);
+    } catch {
+      toast.error("Failed to load inquiries");
+    } finally {
+      setLoading(false);
+    }
+  }, [actor, session]);
+
+  useEffect(() => {
+    loadInquiries();
+  }, [loadInquiries]);
+
+  const handleAdd = async () => {
+    if (!actor) return;
+    setSaving(true);
+    try {
+      await (actor as any).addInquiry(
+        session.userInfo.username,
+        session.password,
+        form.name,
+        form.phone,
+        form.requirement,
+      );
+      toast.success("Inquiry added successfully");
+      setAddOpen(false);
+      setForm(defaultInquiryForm());
+      await loadInquiries();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to add inquiry");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStatusChange = async (inq: InquiryInfo, key: string) => {
+    if (!actor) return;
+    setUpdatingId(inq.id);
+    try {
+      await (actor as any).updateInquiryStatus(
+        session.userInfo.username,
+        session.password,
+        inq.id,
+        statusFromKey(key),
+      );
+      toast.success("Status updated");
+      await loadInquiries();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update status");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!actor || !deleteTarget) return;
+    setSaving(true);
+    try {
+      await (actor as any).deleteInquiry(
+        session.userInfo.username,
+        session.password,
+        deleteTarget.id,
+      );
+      toast.success("Inquiry deleted");
+      setDeleteOpen(false);
+      setDeleteTarget(null);
+      await loadInquiries();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete inquiry");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const formatDate = (ts: bigint) => {
+    const ms = Number(ts) / 1_000_000;
+    return new Date(ms).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">CRM</h1>
+          <p className="text-muted-foreground">
+            Manage customer inquiries and follow-ups
+          </p>
+        </div>
+        <Button
+          data-ocid="crm.add.primary_button"
+          onClick={() => {
+            setForm(defaultInquiryForm());
+            setAddOpen(true);
+          }}
+        >
+          Add Inquiry
+        </Button>
+      </div>
+
+      {loading ? (
+        <div
+          data-ocid="crm.loading_state"
+          className="flex justify-center py-12"
+        >
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : inquiries.length === 0 ? (
+        <div
+          data-ocid="crm.empty_state"
+          className="text-center py-12 text-muted-foreground border border-dashed border-border rounded-lg"
+        >
+          <MessageSquare className="h-10 w-10 mx-auto mb-3 opacity-30" />
+          <p className="font-medium">No inquiries yet</p>
+          <p className="text-sm mt-1">Click "Add Inquiry" to get started.</p>
+        </div>
+      ) : (
+        <div className="rounded-md border border-border overflow-x-auto">
+          <Table data-ocid="crm.table">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">#</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Phone</TableHead>
+                <TableHead>Requirement</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {inquiries.map((inq, i) => (
+                <TableRow key={String(inq.id)} data-ocid={`crm.item.${i + 1}`}>
+                  <TableCell className="text-muted-foreground">
+                    {i + 1}
+                  </TableCell>
+                  <TableCell className="font-medium">{inq.name}</TableCell>
+                  <TableCell>{inq.phone || "—"}</TableCell>
+                  <TableCell className="max-w-[200px]">
+                    <span className="block truncate" title={inq.requirement}>
+                      {inq.requirement || "—"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      {updatingId === inq.id && (
+                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                      )}
+                      <Select
+                        value={statusKey(inq.status)}
+                        onValueChange={(v) => handleStatusChange(inq, v)}
+                        disabled={updatingId === inq.id}
+                      >
+                        <SelectTrigger
+                          data-ocid={`crm.status.select.${i + 1}`}
+                          className="h-8 w-[130px] text-xs"
+                        >
+                          <SelectValue>
+                            <InquiryStatusBadge status={inq.status} />
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="new_">
+                            <InquiryStatusBadge status={{ new_: null }} />
+                          </SelectItem>
+                          <SelectItem value="followUp">
+                            <InquiryStatusBadge status={{ followUp: null }} />
+                          </SelectItem>
+                          <SelectItem value="closed">
+                            <InquiryStatusBadge status={{ closed: null }} />
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                    {formatDate(inq.createdAt)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      data-ocid={`crm.delete_button.${i + 1}`}
+                      onClick={() => {
+                        setDeleteTarget(inq);
+                        setDeleteOpen(true);
+                      }}
+                      title="Delete"
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {/* Add Inquiry Dialog */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent data-ocid="crm.add.dialog">
+          <DialogHeader>
+            <DialogTitle>Add New Inquiry</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Customer Name</Label>
+              <Input
+                data-ocid="crm.form.name_input"
+                value={form.name}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, name: e.target.value }))
+                }
+                placeholder="Full name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <Input
+                data-ocid="crm.form.phone_input"
+                value={form.phone}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, phone: e.target.value }))
+                }
+                placeholder="Phone number"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Requirement</Label>
+              <Textarea
+                data-ocid="crm.form.textarea"
+                value={form.requirement}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, requirement: e.target.value }))
+                }
+                placeholder="Describe the customer's requirement..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setAddOpen(false)}
+              data-ocid="crm.add.cancel_button"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAdd}
+              disabled={saving}
+              data-ocid="crm.add.submit_button"
+            >
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Add Inquiry
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirm Dialog */}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent data-ocid="crm.delete.dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Inquiry</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete the inquiry from{" "}
+              <strong>{deleteTarget?.name}</strong>? This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-ocid="crm.delete.cancel_button">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-ocid="crm.delete.confirm_button"
+              onClick={handleDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 // ── Settings Page ────────────────────────────────────────────────────────────
 function SettingsPage({ session }: { session: Session }) {
   const { actor } = useActor();
@@ -1411,6 +1921,12 @@ export default function App() {
         return <UserManagementPage session={session} />;
       case "employees":
         return <EmployeeManagementPage session={session} />;
+      case "crm":
+        return <CRMPage session={session} />;
+      case "attendance":
+        return <AttendancePage />;
+      case "reports":
+        return <ReportsPage />;
       case "settings":
         return <SettingsPage session={session} />;
     }

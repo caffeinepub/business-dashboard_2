@@ -3,6 +3,8 @@ import Map "mo:core/Map";
 import Principal "mo:core/Principal";
 import Runtime "mo:core/Runtime";
 import Nat "mo:core/Nat";
+import Int "mo:core/Int";
+import Time "mo:base/Time";
 
 import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
@@ -52,11 +54,31 @@ actor {
     salary : Nat;
   };
 
+  // ─── CRM Types ───────────────────────────────────────────────────────────────
+
+  public type InquiryStatus = {
+    #new_;
+    #followUp;
+    #closed;
+  };
+
+  public type InquiryInfo = {
+    id          : Nat;
+    name        : Text;
+    phone       : Text;
+    requirement : Text;
+    status      : InquiryStatus;
+    createdAt   : Int;
+  };
+
   // ─── State ──────────────────────────────────────────────────────────────────
 
   let users     = Map.empty<Text, UserRecord>();
   let employees = Map.empty<Nat, EmployeeInfo>();
   var nextEmpId : Nat = 1;
+
+  let inquiries   = Map.empty<Nat, InquiryInfo>();
+  var nextInqId   : Nat = 1;
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -271,6 +293,74 @@ actor {
       case (?req) {
         if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
         employees.remove(id);
+      };
+    };
+  };
+
+  // ─── CRM / Inquiry API ───────────────────────────────────────────────────────
+
+  public query func listInquiries(
+    requesterUsername : Text,
+    requesterPassword : Text,
+  ) : async [InquiryInfo] {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?_)   { inquiries.values().toArray() };
+    };
+  };
+
+  public shared func addInquiry(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    name        : Text,
+    phone       : Text,
+    requirement : Text,
+  ) : async Nat {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?_) {
+        let id = nextInqId;
+        nextInqId += 1;
+        inquiries.add(id, {
+          id;
+          name;
+          phone;
+          requirement;
+          status = #new_;
+          createdAt = Time.now();
+        });
+        id;
+      };
+    };
+  };
+
+  public shared func updateInquiryStatus(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    id     : Nat,
+    status : InquiryStatus,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?_) {
+        switch (inquiries.get(id)) {
+          case (null) { Runtime.trap("Inquiry not found") };
+          case (?inq) { inquiries.add(id, { inq with status }) };
+        };
+      };
+    };
+  };
+
+  public shared func deleteInquiry(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    id : Nat,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
+        inquiries.remove(id);
       };
     };
   };
