@@ -1,5 +1,4 @@
 import { type UserInfo, UserRole } from "@/backend";
-import { useCamera } from "@/camera/useCamera";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -261,18 +260,43 @@ function CameraCheckInModal({
   onClose: () => void;
   onCapture: () => Promise<void>;
 }) {
-  const {
-    isActive,
-    isSupported,
-    error,
-    isLoading,
-    startCamera,
-    stopCamera,
-    capturePhoto,
-    videoRef,
-    canvasRef,
-  } = useCamera({ facingMode: "environment" });
-  const capturingRef = useRef(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [streamActive, setStreamActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      for (const track of streamRef.current.getTracks()) {
+        track.stop();
+      }
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setStreamActive(false);
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    setStarting(true);
+    setCameraError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setStreamActive(true);
+    } catch {
+      setCameraError("Camera not available");
+    } finally {
+      setStarting(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (open) {
@@ -280,17 +304,20 @@ function CameraCheckInModal({
     } else {
       stopCamera();
     }
+    return () => {
+      stopCamera();
+    };
   }, [open, startCamera, stopCamera]);
 
   const handleTakePhoto = async () => {
-    if (capturingRef.current) return;
-    capturingRef.current = true;
-    try {
-      await capturePhoto(); // capture photo (optional metadata)
-      await onCapture(); // auto-submit attendance
-    } finally {
-      capturingRef.current = false;
-    }
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    await onCapture();
+    stopCamera();
   };
 
   return (
@@ -312,47 +339,33 @@ function CameraCheckInModal({
         </DialogHeader>
 
         <div className="space-y-4">
-          {isSupported === false ? (
-            <div
-              className="rounded-lg bg-destructive/10 p-4 text-destructive text-sm"
-              data-ocid="attendance.camera.error_state"
-            >
-              Camera is not supported in this browser.
-            </div>
-          ) : (
-            <>
-              <div
-                className="relative rounded-lg overflow-hidden bg-black"
-                style={{ aspectRatio: "4/3" }}
-              >
-                <video
-                  ref={videoRef}
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
-                />
-                {isLoading && (
-                  <div
-                    className="absolute inset-0 flex items-center justify-center bg-black/60"
-                    data-ocid="attendance.camera.loading_state"
-                  >
-                    <Loader2 className="h-8 w-8 animate-spin text-white" />
-                  </div>
-                )}
-                {error && (
-                  <div
-                    className="absolute inset-0 flex items-center justify-center bg-black/80 p-4"
-                    data-ocid="attendance.camera.error_state"
-                  >
-                    <p className="text-white text-sm text-center">
-                      {error.message}
-                    </p>
-                  </div>
-                )}
+          <div
+            className="relative rounded-lg overflow-hidden bg-black flex items-center justify-center"
+            style={{ aspectRatio: "4/3" }}
+          >
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              className="w-full h-full object-cover"
+            />
+            {starting && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black">
+                <p className="text-white text-sm">Starting camera...</p>
               </div>
-              <canvas ref={canvasRef} style={{ display: "none" }} />
-            </>
-          )}
+            )}
+            {cameraError && (
+              <div
+                className="absolute inset-0 flex items-center justify-center bg-black p-4"
+                data-ocid="attendance.camera.error_state"
+              >
+                <p className="text-destructive text-sm text-center">
+                  {cameraError}
+                </p>
+              </div>
+            )}
+          </div>
+          <canvas ref={canvasRef} style={{ display: "none" }} />
         </div>
 
         <DialogFooter className="flex gap-2 sm:justify-between">
@@ -365,15 +378,11 @@ function CameraCheckInModal({
           </Button>
           <Button
             onClick={handleTakePhoto}
-            disabled={!isActive || isLoading}
+            disabled={!streamActive}
             className="bg-green-600 hover:bg-green-700 text-white"
             data-ocid="attendance.camera.submit_button"
           >
-            {isLoading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Camera className="mr-2 h-4 w-4" />
-            )}
+            <Camera className="mr-2 h-4 w-4" />
             Take Photo & Check In
           </Button>
         </DialogFooter>
