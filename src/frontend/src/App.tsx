@@ -934,12 +934,216 @@ function PasswordStrengthChecklist({ password }: { password: string }) {
   );
 }
 
+// ── Forgot Password Dialog ───────────────────────────────────────────────────
+function ForgotPasswordDialog({
+  open,
+  onOpenChange,
+}: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { actor } = useActor();
+  const [step, setStep] = useState<1 | 2>(1);
+  const [username, setUsername] = useState("");
+  const [phone, setPhone] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const resetState = () => {
+    setStep(1);
+    setUsername("");
+    setPhone("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setError("");
+    setSubmitting(false);
+  };
+
+  const handleOpenChange = (v: boolean) => {
+    if (!v) resetState();
+    onOpenChange(v);
+  };
+
+  const handleContinue = () => {
+    if (!username.trim() || !phone.trim()) {
+      setError("Please fill in both fields.");
+      return;
+    }
+    setError("");
+    setStep(2);
+  };
+
+  const passwordValid = newPassword.length >= 8;
+  const passwordsMatch = newPassword === confirmPassword;
+
+  const handleReset = async () => {
+    if (!actor) return;
+    if (!passwordValid) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (!passwordsMatch) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setError("");
+    setSubmitting(true);
+    try {
+      await (actor as any).resetPasswordByPhone(
+        username.trim(),
+        phone.trim(),
+        newPassword,
+      );
+      toast.success("Password reset successfully");
+      handleOpenChange(false);
+    } catch (e: any) {
+      const msg: string = e?.message || String(e) || "Reset failed";
+      setError(msg);
+      if (msg.includes("not found") || msg.includes("does not match")) {
+        setStep(1);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-md" data-ocid="forgot_password.dialog">
+        <DialogHeader>
+          <DialogTitle>Reset Password</DialogTitle>
+        </DialogHeader>
+        {step === 1 ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Enter your username and phone number to verify your identity.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="fp-username">Username</Label>
+              <Input
+                id="fp-username"
+                data-ocid="forgot_password.input"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter username"
+                autoComplete="username"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="fp-phone">Phone Number</Label>
+              <Input
+                id="fp-phone"
+                data-ocid="forgot_password.phone_input"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="Enter phone number"
+                type="tel"
+              />
+            </div>
+            {error && (
+              <p
+                data-ocid="forgot_password.error_state"
+                className="text-sm text-destructive"
+              >
+                {error}
+              </p>
+            )}
+            <DialogFooter className="flex gap-2 sm:justify-end">
+              <Button
+                variant="outline"
+                onClick={() => handleOpenChange(false)}
+                data-ocid="forgot_password.cancel_button"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleContinue}
+                data-ocid="forgot_password.primary_button"
+              >
+                Continue
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Choose a new password for <strong>{username}</strong>.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="fp-new-password">New Password</Label>
+              <Input
+                id="fp-new-password"
+                data-ocid="forgot_password.new_password_input"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Min 8 characters"
+              />
+              {newPassword.length > 0 && !passwordValid && (
+                <p className="text-xs text-destructive">
+                  Password must be at least 8 characters.
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="fp-confirm-password">Confirm Password</Label>
+              <Input
+                id="fp-confirm-password"
+                data-ocid="forgot_password.confirm_password_input"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Repeat password"
+              />
+              {confirmPassword.length > 0 && !passwordsMatch && (
+                <p className="text-xs text-destructive">
+                  Passwords do not match.
+                </p>
+              )}
+            </div>
+            {error && (
+              <p
+                data-ocid="forgot_password.error_state"
+                className="text-sm text-destructive"
+              >
+                {error}
+              </p>
+            )}
+            <DialogFooter className="flex gap-2 sm:justify-between">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStep(1);
+                  setError("");
+                }}
+                data-ocid="forgot_password.back_button"
+              >
+                Back
+              </Button>
+              <Button
+                onClick={handleReset}
+                disabled={!passwordValid || !passwordsMatch || submitting}
+                data-ocid="forgot_password.submit_button"
+              >
+                {submitting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Reset Password
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) {
   const { actor, isFetching } = useActor();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   useEffect(() => {
     if (!actor) return;
@@ -1033,9 +1237,18 @@ function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) {
                     ? "Signing in..."
                     : "Sign In"}
               </Button>
+              <button
+                type="button"
+                data-ocid="forgot_password.open_modal_button"
+                onClick={() => setForgotOpen(true)}
+                className="w-full text-center text-sm text-muted-foreground hover:text-foreground underline-offset-4 hover:underline mt-1"
+              >
+                Forgot Password?
+              </button>
             </form>
           </CardContent>
         </Card>
+        <ForgotPasswordDialog open={forgotOpen} onOpenChange={setForgotOpen} />
 
         <p className="text-center text-xs text-muted-foreground">
           © {new Date().getFullYear()}. Built with love using{" "}

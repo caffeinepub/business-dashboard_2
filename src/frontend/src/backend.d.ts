@@ -81,6 +81,11 @@ export interface backendInterface {
     targetUsername: string,
     newPassword: string
   ): Promise<void>;
+  resetPasswordByPhone(
+    username: string,
+    phone: string,
+    newPassword: string
+  ): Promise<void>;
   initializeDefaults(): Promise<void>;
   listEmployees(requesterUsername: string, requesterPassword: string): Promise<Array<EmployeeInfo>>;
   addEmployee(

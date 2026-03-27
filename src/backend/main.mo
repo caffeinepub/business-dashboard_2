@@ -251,6 +251,22 @@ actor {
     };
   };
 
+
+  public shared func resetPasswordByPhone(
+    username    : Text,
+    phone       : Text,
+    newPassword : Text,
+  ) : async () {
+    if (newPassword.size() < 8) { Runtime.trap("Password must be at least 8 characters") };
+    switch (users.get(username)) {
+      case (null) { Runtime.trap("User not found") };
+      case (?u) {
+        if (u.phone != phone or phone == "") { Runtime.trap("Phone number does not match") };
+        users.add(username, { u with password = newPassword });
+        mustChangePw.add(username, false);
+      };
+    };
+  };
   public shared func initializeDefaults() : async () {
     // Seed default users if they don't exist
     let defaults : [(Text, Text, Text, { #superAdmin; #admin; #dataOperator; #employee })] = [
