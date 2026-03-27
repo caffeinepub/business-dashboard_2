@@ -29,8 +29,6 @@ actor {
     #employee;
   };
 
-  // UserRecord intentionally kept identical to the deployed shape to preserve
-  // stable-variable compatibility across upgrades.
   type UserRecord = {
     username : Text;
     password : Text;
@@ -74,12 +72,27 @@ actor {
     createdAt   : Int;
   };
 
+  // ─── Attendance Types ────────────────────────────────────────────────────────
+
+  public type AttendanceStatus = {
+    #present;
+    #absent;
+    #checkedIn;
+  };
+
+  public type AttendanceRecord = {
+    id           : Nat;
+    employeeId   : Text;   // username used as employee identifier
+    employeeName : Text;
+    date         : Text;   // "YYYY-MM-DD"
+    checkIn      : ?Int;   // nanosecond timestamp or null
+    checkOut     : ?Int;
+    status       : AttendanceStatus;
+  };
+
   // ─── State ──────────────────────────────────────────────────────────────────
 
-  // users map shape is unchanged from previous deploys — safe to upgrade.
   let users = Map.empty<Text, UserRecord>();
-
-  // Separate map for the mustChangePassword flag so UserRecord stays stable.
   let mustChangePw = Map.empty<Text, Bool>();
 
   let employees = Map.empty<Nat, EmployeeInfo>();
@@ -87,6 +100,10 @@ actor {
 
   let inquiries = Map.empty<Nat, InquiryInfo>();
   var nextInqId : Nat = 1;
+
+  // attendance keyed by "employeeId:date"
+  let attendance = Map.empty<Text, AttendanceRecord>();
+  var nextAttId : Nat = 1;
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -208,7 +225,6 @@ actor {
       case (null) { Runtime.trap("Current password is incorrect") };
       case (?u) {
         users.add(username, { u with password = newPassword });
-        // Clear the must-change flag once the user sets their own password.
         mustChangePw.add(username, false);
       };
     };
@@ -228,7 +244,6 @@ actor {
           case (null) { Runtime.trap("User not found") };
           case (?u) {
             users.add(targetUsername, { u with password = newPassword });
-            // Force the user to change the admin-supplied password.
             mustChangePw.add(targetUsername, true);
           };
         };
@@ -237,7 +252,6 @@ actor {
   };
 
   public shared func initializeDefaults() : async () {
-    // Only seed superadmin; never overwrite an existing password.
     switch (users.get("superadmin")) {
       case (?_) { /* already exists */ };
       case (null) {
@@ -384,6 +398,158 @@ actor {
       case (?req) {
         if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
         inquiries.remove(id);
+      };
+    };
+  };
+
+  // ─── Attendance API ──────────────────────────────────────────────────────────
+
+  // key = employeeId ++ ":" ++ date
+  func attKey(employeeId : Text, date : Text) : Text {
+    employeeId # ":" # date;
+  };
+
+  public shared func checkIn(
+    username : Text,
+    password : Text,
+    date     : Text,   // "YYYY-MM-DD"
+  ) : async AttendanceRecord {
+    switch (authUser(username, password)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?u) {
+        let key = attKey(username, date);
+        switch (attendance.get(key)) {
+          case (?existing) {
+            // Already checked in today
+            existing;
+          };
+          case (null) {
+            let rec : AttendanceRecord = {
+              id           = nextAttId;
+              employeeId   = username;
+              employeeName = u.name;
+              date         = date;
+              checkIn      = ?Time.now();
+              checkOut     = null;
+              status       = #checkedIn;
+            };
+            nextAttId += 1;
+            attendance.add(key, rec);
+            rec;
+          };
+        };
+      };
+    };
+  };
+
+  public shared func checkOut(
+    username : Text,
+    password : Text,
+    date     : Text,
+  ) : async AttendanceRecord {
+    switch (authUser(username, password)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?_) {
+        let key = attKey(username, date);
+        switch (attendance.get(key)) {
+          case (null) { Runtime.trap("No check-in found for today") };
+          case (?rec) {
+            let updated : AttendanceRecord = {
+              rec with
+              checkOut = ?Time.now();
+              status   = #present;
+            };
+            attendance.add(key, updated);
+            updated;
+          };
+        };
+      };
+    };
+  };
+
+  public query func getMyAttendance(
+    username : Text,
+    password : Text,
+    date     : Text,
+  ) : async ?AttendanceRecord {
+    switch (authUser(username, password)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?_) {
+        attendance.get(attKey(username, date));
+      };
+    };
+  };
+
+  public query func getEmployeeAttendance(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    employeeId        : Text,
+  ) : async [AttendanceRecord] {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
+        attendance.values().toArray()
+          |> Array.filter(_, func(r : AttendanceRecord) : Bool { r.employeeId == employeeId });
+      };
+    };
+  };
+
+  public query func getAttendanceByDate(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    date              : Text,
+  ) : async [AttendanceRecord] {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
+        attendance.values().toArray()
+          |> Array.filter(_, func(r : AttendanceRecord) : Bool { r.date == date });
+      };
+    };
+  };
+
+  public query func getAllAttendance(
+    requesterUsername : Text,
+    requesterPassword : Text,
+  ) : async [AttendanceRecord] {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
+        attendance.values().toArray();
+      };
+    };
+  };
+
+  public shared func markAbsent(
+    requesterUsername : Text,
+    requesterPassword : Text,
+    employeeId        : Text,
+    employeeName      : Text,
+    date              : Text,
+  ) : async () {
+    switch (authUser(requesterUsername, requesterPassword)) {
+      case (null) { Runtime.trap("Authentication failed") };
+      case (?req) {
+        if (not canManageEmployees(req.role)) { Runtime.trap("Unauthorized") };
+        let key = attKey(employeeId, date);
+        switch (attendance.get(key)) {
+          case (?_) { /* already has record, skip */ };
+          case (null) {
+            attendance.add(key, {
+              id           = nextAttId;
+              employeeId   = employeeId;
+              employeeName = employeeName;
+              date         = date;
+              checkIn      = null;
+              checkOut     = null;
+              status       = #absent;
+            });
+            nextAttId += 1;
+          };
+        };
       };
     };
   };

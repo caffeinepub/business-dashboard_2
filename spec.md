@@ -1,27 +1,28 @@
 # Business Dashboard
 
 ## Current State
-- Login system with 4 roles: Super Admin, Admin, Data Operator, Employee
-- User management (CRUD, password reset)
-- Employee management (CRUD: name, phone, role, salary)
-- All features connected to backend with session-based auth (username/password passed per call)
+Full-stack app with: login, user management (CRUD + password), employee management, CRM/inquiry management, dashboard stats. Attendance sidebar link exists but no attendance logic.
 
 ## Requested Changes (Diff)
 
 ### Add
-- CRM module: Customer Inquiries
-  - Fields: id, name, phone, requirement, status (New | Follow-up | Closed), createdAt (timestamp)
-  - Backend: addInquiry, listInquiries, updateInquiryStatus, deleteInquiry
-  - Frontend: "CRM" sidebar item, inquiry list table, add inquiry form/dialog, status badge, status update action
+- `AttendanceRecord` type: `{ id, employeeId, employeeName, date, checkIn, checkOut, status }`
+- `AttendanceStatus`: `#present | #absent | #checkedIn`
+- Backend functions: `checkIn`, `checkOut`, `getAttendanceByDate`, `getEmployeeAttendance`, `getAllAttendance`, `markAbsentForDate`
+- Frontend Attendance page for employees: Check In / Check Out buttons, today's status card
+- Frontend Admin Attendance panel: view all records, filter by date, monthly report tab
 
 ### Modify
-- App.tsx: add CRM page/section to the sidebar and routing
+- `main.mo`: add attendance state and APIs
+- `backend.d.ts`: add attendance types and function signatures
+- `App.tsx`: wire Attendance sidebar item to real attendance UI
 
 ### Remove
 - Nothing removed
 
 ## Implementation Plan
-1. Add InquiryStatus variant and InquiryInfo type to backend
-2. Add inquiry Map and nextInquiryId counter to backend state
-3. Implement addInquiry, listInquiries, updateInquiryStatus, deleteInquiry backend functions
-4. Update frontend: add CRM page with inquiry list, add inquiry dialog, status badges, update/delete actions
+1. Add `AttendanceRecord`, `AttendanceStatus` types and state to `main.mo`
+2. Implement `checkIn`, `checkOut`, `getAttendanceByDate`, `getEmployeeAttendance`, `getAllAttendance` in `main.mo`
+3. Update `backend.d.ts` with attendance types and signatures
+4. Build `AttendancePage` component in `App.tsx` (employee + admin views)
+5. Wire the Attendance sidebar menu item to the new page

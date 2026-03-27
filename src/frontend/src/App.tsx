@@ -185,27 +185,532 @@ function statusFromKey(key: string): InquiryStatus {
 
 // ── Login Page ───────────────────────────────────────────────────────────────
 
-// ── Attendance Placeholder Page ──────────────────────────────────────────────
-function AttendancePage() {
+// ── Attendance types ─────────────────────────────────────────────────────────
+type AttendanceStatus =
+  | { present: null }
+  | { absent: null }
+  | { checkedIn: null };
+
+interface AttendanceRecord {
+  id: bigint;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  checkIn: [] | [bigint];
+  checkOut: [] | [bigint];
+  status: AttendanceStatus;
+}
+
+function attendanceStatusLabel(s: AttendanceStatus): string {
+  if ("present" in s) return "Present";
+  if ("checkedIn" in s) return "Checked In";
+  return "Absent";
+}
+
+function AttendanceStatusBadge({ status }: { status: AttendanceStatus }) {
+  let cls = "";
+  let label = attendanceStatusLabel(status);
+  if ("present" in status)
+    cls = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
+  else if ("checkedIn" in status)
+    cls =
+      "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
+  else cls = "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
   return (
-    <div className="space-y-6">
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cls}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function fmtTime(ts: [] | [bigint] | bigint | null | undefined): string {
+  if (ts === null || ts === undefined) return "—";
+  let val: bigint | null = null;
+  if (typeof ts === "bigint") val = ts;
+  else if (Array.isArray(ts) && ts.length > 0) val = ts[0] ?? null;
+  if (val === null) return "—";
+  return new Date(Number(val) / 1_000_000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getToday(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
+function isAdmin(role: UserRole): boolean {
+  return (
+    role === UserRole.superAdmin ||
+    role === UserRole.admin ||
+    role === UserRole.dataOperator
+  );
+}
+
+// ── Attendance Page ───────────────────────────────────────────────────────────
+function AttendancePage({ session }: { session: Session }) {
+  const { actor } = useActor();
+  const today = getToday();
+
+  // My attendance state
+  const [myRecord, setMyRecord] = useState<AttendanceRecord | null>(null);
+  const [myLoading, setMyLoading] = useState(false);
+  const [checkingIn, setCheckingIn] = useState(false);
+  const [checkingOut, setCheckingOut] = useState(false);
+
+  // Admin state
+  const [adminTab, setAdminTab] = useState<"daily" | "monthly">("daily");
+  const [filterDate, setFilterDate] = useState(today);
+  const [dailyRecords, setDailyRecords] = useState<AttendanceRecord[]>([]);
+  const [monthlyRecords, setMonthlyRecords] = useState<AttendanceRecord[]>([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [markingAbsent, setMarkingAbsent] = useState<string | null>(null);
+
+  const admin = isAdmin(session.userInfo.role);
+
+  const loadMyRecord = useCallback(async () => {
+    if (!actor) return;
+    setMyLoading(true);
+    try {
+      const result = await (actor as any).getMyAttendance(
+        session.userInfo.username,
+        session.password,
+        today,
+      );
+      setMyRecord(
+        Array.isArray(result)
+          ? result.length > 0
+            ? result[0]
+            : null
+          : (result ?? null),
+      );
+    } catch {
+      // no record yet
+    } finally {
+      setMyLoading(false);
+    }
+  }, [actor, session, today]);
+
+  const loadDailyRecords = useCallback(
+    async (date: string) => {
+      if (!actor) return;
+      setAdminLoading(true);
+      try {
+        const list = await (actor as any).getAttendanceByDate(
+          session.userInfo.username,
+          session.password,
+          date,
+        );
+        setDailyRecords(list);
+      } catch {
+        toast.error("Failed to load attendance records");
+      } finally {
+        setAdminLoading(false);
+      }
+    },
+    [actor, session],
+  );
+
+  const loadMonthlyRecords = useCallback(async () => {
+    if (!actor) return;
+    setAdminLoading(true);
+    try {
+      const list = await (actor as any).getAllAttendance(
+        session.userInfo.username,
+        session.password,
+      );
+      setMonthlyRecords(list);
+    } catch {
+      toast.error("Failed to load monthly attendance");
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [actor, session]);
+
+  useEffect(() => {
+    loadMyRecord();
+  }, [loadMyRecord]);
+  useEffect(() => {
+    if (admin) {
+      loadDailyRecords(today);
+      loadMonthlyRecords();
+    }
+  }, [admin, loadDailyRecords, loadMonthlyRecords, today]);
+
+  const handleCheckIn = async () => {
+    if (!actor) return;
+    setCheckingIn(true);
+    try {
+      const rec = await (actor as any).checkIn(
+        session.userInfo.username,
+        session.password,
+        today,
+      );
+      setMyRecord(rec);
+      toast.success("Checked in successfully!");
+      if (admin) loadDailyRecords(filterDate);
+    } catch (e: any) {
+      toast.error(e?.message || "Check-in failed");
+    } finally {
+      setCheckingIn(false);
+    }
+  };
+
+  const handleCheckOut = async () => {
+    if (!actor) return;
+    setCheckingOut(true);
+    try {
+      const rec = await (actor as any).checkOut(
+        session.userInfo.username,
+        session.password,
+        today,
+      );
+      setMyRecord(rec);
+      toast.success("Checked out successfully!");
+      if (admin) loadDailyRecords(filterDate);
+    } catch (e: any) {
+      toast.error(e?.message || "Check-out failed");
+    } finally {
+      setCheckingOut(false);
+    }
+  };
+
+  const handleMarkAbsent = async (
+    employeeId: string,
+    employeeName: string,
+    date: string,
+  ) => {
+    if (!actor) return;
+    setMarkingAbsent(employeeId);
+    try {
+      await (actor as any).markAbsent(
+        session.userInfo.username,
+        session.password,
+        employeeId,
+        employeeName,
+        date,
+      );
+      toast.success(`${employeeName} marked as absent`);
+      loadDailyRecords(date);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to mark absent");
+    } finally {
+      setMarkingAbsent(null);
+    }
+  };
+
+  const checkedIn = myRecord && "checkedIn" in myRecord.status;
+  const alreadyPresent = myRecord && "present" in myRecord.status;
+  const canCheckIn = !myRecord || "absent" in myRecord.status;
+  const canCheckOut = checkedIn;
+
+  // Monthly report: group by employee for current month
+  const currentMonth = today.substring(0, 7);
+  const monthFiltered = monthlyRecords.filter((r) =>
+    r.date.startsWith(currentMonth),
+  );
+  const employeeMonthMap: Record<
+    string,
+    { name: string; present: number; absent: number; checkedIn: number }
+  > = {};
+  for (const r of monthFiltered) {
+    if (!employeeMonthMap[r.employeeId]) {
+      employeeMonthMap[r.employeeId] = {
+        name: r.employeeName,
+        present: 0,
+        absent: 0,
+        checkedIn: 0,
+      };
+    }
+    if ("present" in r.status) employeeMonthMap[r.employeeId].present++;
+    else if ("absent" in r.status) employeeMonthMap[r.employeeId].absent++;
+    else employeeMonthMap[r.employeeId].checkedIn++;
+  }
+  const monthlyRows = Object.entries(employeeMonthMap);
+
+  return (
+    <div className="space-y-6" data-ocid="attendance.page">
       <div>
         <h1 className="text-2xl font-bold">Attendance</h1>
         <p className="text-muted-foreground">
-          Track employee check-in and check-out
+          Track your check-in and check-out
         </p>
       </div>
-      <Card
-        data-ocid="attendance.coming_soon.card"
-        className="flex flex-col items-center justify-center py-16"
-      >
-        <CalendarCheck className="h-12 w-12 text-muted-foreground mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Coming Soon</h2>
-        <p className="text-muted-foreground text-sm text-center max-w-xs">
-          Attendance tracking with check-in / check-out and monthly reports will
-          be available soon.
-        </p>
+
+      {/* Today's Status Card */}
+      <Card data-ocid="attendance.today.card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CalendarCheck className="h-5 w-5" />
+            Today —{" "}
+            {new Date().toLocaleDateString(undefined, {
+              weekday: "long",
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {myLoading ? (
+            <div
+              className="flex items-center gap-2 text-muted-foreground"
+              data-ocid="attendance.today.loading_state"
+            >
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-6 items-center">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Status</p>
+                  {myRecord ? (
+                    <AttendanceStatusBadge status={myRecord.status} />
+                  ) : (
+                    <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                      Not Recorded
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Check In</p>
+                  <p className="font-semibold">
+                    {myRecord ? fmtTime(myRecord.checkIn) : "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    Check Out
+                  </p>
+                  <p className="font-semibold">
+                    {myRecord ? fmtTime(myRecord.checkOut) : "—"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 flex-wrap">
+                <Button
+                  data-ocid="attendance.checkin.button"
+                  onClick={handleCheckIn}
+                  disabled={!canCheckIn || checkingIn || !!alreadyPresent}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {checkingIn ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                  )}
+                  Check In
+                </Button>
+                <Button
+                  data-ocid="attendance.checkout.button"
+                  onClick={handleCheckOut}
+                  disabled={!canCheckOut || checkingOut}
+                  variant="outline"
+                >
+                  {checkingOut ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <XCircle className="mr-2 h-4 w-4" />
+                  )}
+                  Check Out
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
       </Card>
+
+      {/* Admin Panel */}
+      {admin && (
+        <div className="space-y-4" data-ocid="attendance.admin.panel">
+          <div className="flex gap-2 border-b border-border">
+            <button
+              type="button"
+              data-ocid="attendance.daily.tab"
+              onClick={() => setAdminTab("daily")}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${adminTab === "daily" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+            >
+              Daily View
+            </button>
+            <button
+              type="button"
+              data-ocid="attendance.monthly.tab"
+              onClick={() => setAdminTab("monthly")}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${adminTab === "monthly" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+            >
+              Monthly Report
+            </button>
+          </div>
+
+          {adminTab === "daily" && (
+            <Card data-ocid="attendance.daily.card">
+              <CardHeader>
+                <CardTitle>Attendance by Date</CardTitle>
+                <div className="flex gap-2 mt-2">
+                  <Input
+                    data-ocid="attendance.date.input"
+                    type="date"
+                    value={filterDate}
+                    onChange={(e) => setFilterDate(e.target.value)}
+                    className="w-44"
+                  />
+                  <Button
+                    data-ocid="attendance.filter.button"
+                    onClick={() => loadDailyRecords(filterDate)}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Load
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {adminLoading ? (
+                  <div
+                    className="flex items-center gap-2 text-muted-foreground py-4"
+                    data-ocid="attendance.daily.loading_state"
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  </div>
+                ) : dailyRecords.length === 0 ? (
+                  <div
+                    className="text-center py-8 text-muted-foreground"
+                    data-ocid="attendance.daily.empty_state"
+                  >
+                    No records for this date.
+                  </div>
+                ) : (
+                  <Table data-ocid="attendance.daily.table">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Check In</TableHead>
+                        <TableHead>Check Out</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {dailyRecords.map((r, idx) => (
+                        <TableRow
+                          key={String(r.id)}
+                          data-ocid={`attendance.daily.row.${idx + 1}`}
+                        >
+                          <TableCell className="font-medium">
+                            {r.employeeName}
+                          </TableCell>
+                          <TableCell>{fmtTime(r.checkIn)}</TableCell>
+                          <TableCell>{fmtTime(r.checkOut)}</TableCell>
+                          <TableCell>
+                            <AttendanceStatusBadge status={r.status} />
+                          </TableCell>
+                          <TableCell>
+                            {"absent" in r.status && (
+                              <Button
+                                data-ocid={`attendance.mark_absent.button.${idx + 1}`}
+                                size="sm"
+                                variant="outline"
+                                disabled={markingAbsent === r.employeeId}
+                                onClick={() =>
+                                  handleMarkAbsent(
+                                    r.employeeId,
+                                    r.employeeName,
+                                    filterDate,
+                                  )
+                                }
+                              >
+                                {markingAbsent === r.employeeId ? (
+                                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                ) : null}
+                                Mark Absent
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {adminTab === "monthly" && (
+            <Card data-ocid="attendance.monthly.card">
+              <CardHeader>
+                <CardTitle>
+                  Monthly Report —{" "}
+                  {new Date().toLocaleDateString(undefined, {
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {adminLoading ? (
+                  <div
+                    className="flex items-center gap-2 text-muted-foreground py-4"
+                    data-ocid="attendance.monthly.loading_state"
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  </div>
+                ) : monthlyRows.length === 0 ? (
+                  <div
+                    className="text-center py-8 text-muted-foreground"
+                    data-ocid="attendance.monthly.empty_state"
+                  >
+                    No attendance records for this month.
+                  </div>
+                ) : (
+                  <Table data-ocid="attendance.monthly.table">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Present</TableHead>
+                        <TableHead>Checked In</TableHead>
+                        <TableHead>Absent</TableHead>
+                        <TableHead>Total Days</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {monthlyRows.map(([empId, data], idx) => (
+                        <TableRow
+                          key={empId}
+                          data-ocid={`attendance.monthly.row.${idx + 1}`}
+                        >
+                          <TableCell className="font-medium">
+                            {data.name}
+                          </TableCell>
+                          <TableCell>
+                            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                              {data.present}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                              {data.checkedIn}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                              {data.absent}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {data.present + data.checkedIn + data.absent}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2101,7 +2606,7 @@ export default function App() {
       case "crm":
         return <CRMPage session={session} />;
       case "attendance":
-        return <AttendancePage />;
+        return <AttendancePage session={session} />;
       case "reports":
         return <ReportsPage />;
       case "settings":

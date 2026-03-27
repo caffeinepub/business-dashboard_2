@@ -32,6 +32,18 @@ export interface InquiryInfo {
   createdAt: bigint;
 }
 
+export type AttendanceStatus = { present: null } | { absent: null } | { checkedIn: null };
+
+export interface AttendanceRecord {
+  id: bigint;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  checkIn: bigint | null;
+  checkOut: bigint | null;
+  status: AttendanceStatus;
+}
+
 export interface backendInterface {
   _initializeAccessControlWithSecret(adminToken: string): Promise<void>;
   authenticate(username: string, password: string): Promise<UserInfo | null>;
@@ -111,5 +123,30 @@ export interface backendInterface {
     requesterUsername: string,
     requesterPassword: string,
     id: bigint
+  ): Promise<void>;
+  // Attendance
+  checkIn(username: string, password: string, date: string): Promise<AttendanceRecord>;
+  checkOut(username: string, password: string, date: string): Promise<AttendanceRecord>;
+  getMyAttendance(username: string, password: string, date: string): Promise<AttendanceRecord | null>;
+  getEmployeeAttendance(
+    requesterUsername: string,
+    requesterPassword: string,
+    employeeId: string
+  ): Promise<Array<AttendanceRecord>>;
+  getAttendanceByDate(
+    requesterUsername: string,
+    requesterPassword: string,
+    date: string
+  ): Promise<Array<AttendanceRecord>>;
+  getAllAttendance(
+    requesterUsername: string,
+    requesterPassword: string
+  ): Promise<Array<AttendanceRecord>>;
+  markAbsent(
+    requesterUsername: string,
+    requesterPassword: string,
+    employeeId: string,
+    employeeName: string,
+    date: string
   ): Promise<void>;
 }
