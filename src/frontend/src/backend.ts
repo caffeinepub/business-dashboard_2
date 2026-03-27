@@ -5,7 +5,6 @@
 import { Actor, HttpAgent, type HttpAgentOptions, type ActorConfig, type Agent, type ActorSubclass } from "@icp-sdk/core/agent";
 import { idlFactory, type _SERVICE } from "./declarations/backend.did";
 
-// ExternalBlob is kept so config.ts can import it without changes
 export class ExternalBlob {
   private url: string | null;
   private blob: Uint8Array | null;
@@ -55,6 +54,7 @@ export interface UserInfo {
   name: string;
   phone: string;
   role: UserRole;
+  mustChangePassword: boolean;
 }
 
 export interface EmployeeInfo {
@@ -65,20 +65,35 @@ export interface EmployeeInfo {
   salary: bigint;
 }
 
+export type InquiryStatus = { new_: null } | { followUp: null } | { closed: null };
+
+export interface InquiryInfo {
+  id: bigint;
+  name: string;
+  phone: string;
+  requirement: string;
+  status: InquiryStatus;
+  createdAt: bigint;
+}
+
 export interface backendInterface {
   _initializeAccessControlWithSecret(adminToken: string): Promise<void>;
   authenticate(username: string, password: string): Promise<UserInfo | null>;
-  listUsers(requesterUsername: string, requesterPassword: string): Promise<Array<UserInfo>>;
+  listUsers(reqUser: string, reqPass: string): Promise<Array<UserInfo>>;
   createUser(reqUser: string, reqPass: string, username: string, password: string, name: string, phone: string, role: UserRole): Promise<void>;
   updateUser(reqUser: string, reqPass: string, username: string, name: string, phone: string, role: UserRole): Promise<void>;
   deleteUser(reqUser: string, reqPass: string, username: string): Promise<void>;
   changePassword(username: string, oldPassword: string, newPassword: string): Promise<void>;
   resetPassword(reqUser: string, reqPass: string, targetUsername: string, newPassword: string): Promise<void>;
   initializeDefaults(): Promise<void>;
-  listEmployees(requesterUsername: string, requesterPassword: string): Promise<Array<EmployeeInfo>>;
+  listEmployees(reqUser: string, reqPass: string): Promise<Array<EmployeeInfo>>;
   addEmployee(reqUser: string, reqPass: string, name: string, phone: string, role: string, salary: bigint): Promise<bigint>;
   updateEmployee(reqUser: string, reqPass: string, id: bigint, name: string, phone: string, role: string, salary: bigint): Promise<void>;
   deleteEmployee(reqUser: string, reqPass: string, id: bigint): Promise<void>;
+  listInquiries(reqUser: string, reqPass: string): Promise<Array<InquiryInfo>>;
+  addInquiry(reqUser: string, reqPass: string, name: string, phone: string, requirement: string): Promise<bigint>;
+  updateInquiryStatus(reqUser: string, reqPass: string, id: bigint, status: InquiryStatus): Promise<void>;
+  deleteInquiry(reqUser: string, reqPass: string, id: bigint): Promise<void>;
 }
 
 function toCandidRole(role: UserRole): any {
@@ -99,7 +114,44 @@ function fromCandidRole(r: any): UserRole {
 }
 
 function fromCandidInfo(u: any): UserInfo {
-  return { username: u.username, name: u.name, phone: u.phone, role: fromCandidRole(u.role) };
+  return {
+    username: u.username,
+    name: u.name,
+    phone: u.phone,
+    role: fromCandidRole(u.role),
+    mustChangePassword: u.mustChangePassword ?? false,
+  };
+}
+
+function fromCandidEmployee(e: any): EmployeeInfo {
+  return {
+    id: BigInt(e.id),
+    name: e.name,
+    phone: e.phone,
+    role: e.role,
+    salary: BigInt(e.salary),
+  };
+}
+
+function fromCandidInquiry(i: any): InquiryInfo {
+  let status: InquiryStatus;
+  if ('new_' in i.status) status = { new_: null };
+  else if ('followUp' in i.status) status = { followUp: null };
+  else status = { closed: null };
+  return {
+    id: BigInt(i.id),
+    name: i.name,
+    phone: i.phone,
+    requirement: i.requirement,
+    status,
+    createdAt: BigInt(i.createdAt),
+  };
+}
+
+function toCandidInquiryStatus(status: InquiryStatus): any {
+  if ('new_' in status) return { new_: null };
+  if ('followUp' in status) return { followUp: null };
+  return { closed: null };
 }
 
 export class Backend implements backendInterface {
@@ -153,20 +205,14 @@ export class Backend implements backendInterface {
   }
 
   async initializeDefaults(): Promise<void> {
-    console.log('[initializeDefaults] seeding default users...');
+    console.log('[initializeDefaults] seeding superadmin...');
     await this.actor.initializeDefaults();
     console.log('[initializeDefaults] done');
   }
 
   async listEmployees(reqUser: string, reqPass: string): Promise<Array<EmployeeInfo>> {
     const result = await (this.actor as any).listEmployees(reqUser, reqPass);
-    return result.map((e: any) => ({
-      id: BigInt(e.id),
-      name: e.name,
-      phone: e.phone,
-      role: e.role,
-      salary: BigInt(e.salary),
-    }));
+    return result.map(fromCandidEmployee);
   }
 
   async addEmployee(reqUser: string, reqPass: string, name: string, phone: string, role: string, salary: bigint): Promise<bigint> {
@@ -180,6 +226,24 @@ export class Backend implements backendInterface {
 
   async deleteEmployee(reqUser: string, reqPass: string, id: bigint): Promise<void> {
     await (this.actor as any).deleteEmployee(reqUser, reqPass, id);
+  }
+
+  async listInquiries(reqUser: string, reqPass: string): Promise<Array<InquiryInfo>> {
+    const result = await (this.actor as any).listInquiries(reqUser, reqPass);
+    return result.map(fromCandidInquiry);
+  }
+
+  async addInquiry(reqUser: string, reqPass: string, name: string, phone: string, requirement: string): Promise<bigint> {
+    const result = await (this.actor as any).addInquiry(reqUser, reqPass, name, phone, requirement);
+    return BigInt(result);
+  }
+
+  async updateInquiryStatus(reqUser: string, reqPass: string, id: bigint, status: InquiryStatus): Promise<void> {
+    await (this.actor as any).updateInquiryStatus(reqUser, reqPass, id, toCandidInquiryStatus(status));
+  }
+
+  async deleteInquiry(reqUser: string, reqPass: string, id: bigint): Promise<void> {
+    await (this.actor as any).deleteInquiry(reqUser, reqPass, id);
   }
 }
 

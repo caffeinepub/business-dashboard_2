@@ -29,6 +29,8 @@ actor {
     #employee;
   };
 
+  // UserRecord intentionally kept identical to the deployed shape to preserve
+  // stable-variable compatibility across upgrades.
   type UserRecord = {
     username : Text;
     password : Text;
@@ -38,10 +40,11 @@ actor {
   };
 
   public type UserInfo = {
-    username : Text;
-    name     : Text;
-    phone    : Text;
-    role     : UserRole;
+    username          : Text;
+    name              : Text;
+    phone             : Text;
+    role              : UserRole;
+    mustChangePassword : Bool;
   };
 
   // ─── Employee Types ─────────────────────────────────────────────────────────
@@ -73,12 +76,17 @@ actor {
 
   // ─── State ──────────────────────────────────────────────────────────────────
 
-  let users     = Map.empty<Text, UserRecord>();
+  // users map shape is unchanged from previous deploys — safe to upgrade.
+  let users = Map.empty<Text, UserRecord>();
+
+  // Separate map for the mustChangePassword flag so UserRecord stays stable.
+  let mustChangePw = Map.empty<Text, Bool>();
+
   let employees = Map.empty<Nat, EmployeeInfo>();
   var nextEmpId : Nat = 1;
 
-  let inquiries   = Map.empty<Nat, InquiryInfo>();
-  var nextInqId   : Nat = 1;
+  let inquiries = Map.empty<Nat, InquiryInfo>();
+  var nextInqId : Nat = 1;
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -98,7 +106,16 @@ actor {
   };
 
   func toInfo(u : UserRecord) : UserInfo {
-    { username = u.username; name = u.name; phone = u.phone; role = u.role };
+    {
+      username          = u.username;
+      name              = u.name;
+      phone             = u.phone;
+      role              = u.role;
+      mustChangePassword = switch (mustChangePw.get(u.username)) {
+        case (?v) { v };
+        case (null) { false };
+      };
+    };
   };
 
   // ─── User API ────────────────────────────────────────────────────────────────
@@ -137,6 +154,7 @@ actor {
           case (?_) { Runtime.trap("Username already exists") };
           case (null) {
             users.add(username, { username; password; name; phone; role });
+            mustChangePw.add(username, true);
           };
         };
       };
@@ -158,7 +176,7 @@ actor {
         switch (users.get(username)) {
           case (null) { Runtime.trap("User not found") };
           case (?u) {
-            users.add(username, { username; password = u.password; name; phone; role });
+            users.add(username, { u with name; phone; role });
           };
         };
       };
@@ -176,6 +194,7 @@ actor {
         if (not isAdminRole(req.role)) { Runtime.trap("Unauthorized") };
         if (username == requesterUsername) { Runtime.trap("Cannot delete yourself") };
         users.remove(username);
+        mustChangePw.remove(username);
       };
     };
   };
@@ -189,6 +208,8 @@ actor {
       case (null) { Runtime.trap("Current password is incorrect") };
       case (?u) {
         users.add(username, { u with password = newPassword });
+        // Clear the must-change flag once the user sets their own password.
+        mustChangePw.add(username, false);
       };
     };
   };
@@ -207,6 +228,8 @@ actor {
           case (null) { Runtime.trap("User not found") };
           case (?u) {
             users.add(targetUsername, { u with password = newPassword });
+            // Force the user to change the admin-supplied password.
+            mustChangePw.add(targetUsername, true);
           };
         };
       };
@@ -214,18 +237,18 @@ actor {
   };
 
   public shared func initializeDefaults() : async () {
-    let defaults : [(Text, Text, Text, Text, UserRole)] = [
-      ("superadmin", "super123", "Super Admin",   "", #superAdmin),
-      ("admin",      "admin123", "Administrator",  "", #admin),
-      ("operator",   "op123",    "Data Operator",  "", #dataOperator),
-      ("employee",   "emp123",   "Employee User",  "", #employee),
-    ];
-    for ((username, password, name, phone, role) in defaults.vals()) {
-      switch (users.get(username)) {
-        case (?u) { users.add(username, { u with password }) };
-        case (null) {
-          users.add(username, { username; password; name; phone; role });
-        };
+    // Only seed superadmin; never overwrite an existing password.
+    switch (users.get("superadmin")) {
+      case (?_) { /* already exists */ };
+      case (null) {
+        users.add("superadmin", {
+          username = "superadmin";
+          password = "Admin@1234";
+          name     = "Super Admin";
+          phone    = "";
+          role     = #superAdmin;
+        });
+        mustChangePw.add("superadmin", true);
       };
     };
   };
@@ -326,7 +349,7 @@ actor {
           name;
           phone;
           requirement;
-          status = #new_;
+          status    = #new_;
           createdAt = Time.now();
         });
         id;

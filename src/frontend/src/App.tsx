@@ -51,6 +51,7 @@ import {
   BarChart2,
   Briefcase,
   CalendarCheck,
+  CheckCircle2,
   KeyRound,
   LayoutDashboard,
   Loader2,
@@ -61,6 +62,7 @@ import {
   Settings,
   Trash2,
   Users,
+  XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -231,6 +233,49 @@ function ReportsPage() {
   );
 }
 
+// ── Password strength helpers ────────────────────────────────────────────────
+function validatePassword(pw: string): {
+  hasLength: boolean;
+  hasNumber: boolean;
+  hasSpecial: boolean;
+} {
+  return {
+    hasLength: pw.length >= 8,
+    hasNumber: /[0-9]/.test(pw),
+    hasSpecial: /[!@#$%^&*()\-_=+[\]{};:\'",.<>?/\\|`~]/.test(pw),
+  };
+}
+function isPasswordStrong(pw: string): boolean {
+  const v = validatePassword(pw);
+  return v.hasLength && v.hasNumber && v.hasSpecial;
+}
+
+function PasswordStrengthChecklist({ password }: { password: string }) {
+  const v = validatePassword(password);
+  const rules = [
+    { label: "At least 8 characters", met: v.hasLength },
+    { label: "Contains a number (0-9)", met: v.hasNumber },
+    { label: "Contains a special character (!@#$%...)", met: v.hasSpecial },
+  ];
+  return (
+    <ul className="space-y-1 mt-2">
+      {rules.map((r) => (
+        <li
+          key={r.label}
+          className={`flex items-center gap-2 text-xs ${r.met ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"}`}
+        >
+          {r.met ? (
+            <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+          ) : (
+            <XCircle className="h-3.5 w-3.5 flex-shrink-0" />
+          )}
+          {r.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) {
   const { actor, isFetching } = useActor();
   const [username, setUsername] = useState("");
@@ -334,41 +379,6 @@ function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Demo Credentials</CardTitle>
-            <CardDescription className="text-xs">
-              Click a row to auto-fill
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="space-y-2">
-              {[
-                { u: "superadmin", p: "super123", role: UserRole.superAdmin },
-                { u: "admin", p: "admin123", role: UserRole.admin },
-                { u: "operator", p: "op123", role: UserRole.dataOperator },
-                { u: "employee", p: "emp123", role: UserRole.employee },
-              ].map(({ u, p, role }) => (
-                <button
-                  key={u}
-                  type="button"
-                  onClick={() => {
-                    setUsername(u);
-                    setPassword(p);
-                    setError("");
-                  }}
-                  className="w-full flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
-                >
-                  <span className="font-mono">
-                    {u} / {p}
-                  </span>
-                  <RoleBadge role={role} />
-                </button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
         <p className="text-center text-xs text-muted-foreground">
           © {new Date().getFullYear()}. Built with love using{" "}
           <a
@@ -380,6 +390,137 @@ function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) {
             caffeine.ai
           </a>
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Force Change Password Page ───────────────────────────────────────────────
+function ForceChangePasswordPage({
+  session,
+  onSuccess,
+}: {
+  session: Session;
+  onSuccess: (newPassword: string) => void;
+}) {
+  const { actor } = useActor();
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // v used via PasswordStrengthChecklist
+  const allRulesMet = isPasswordStrong(newPw);
+  const passwordsMatch = newPw.length > 0 && newPw === confirmPw;
+  const canSubmit = allRulesMet && passwordsMatch && currentPw.length > 0;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!actor || !canSubmit) return;
+    setError("");
+    setSaving(true);
+    try {
+      await actor.changePassword(session.userInfo.username, currentPw, newPw);
+      onSuccess(newPw);
+    } catch (e: any) {
+      setError(e?.message || "Current password is incorrect");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="w-full max-w-md space-y-6">
+        <div className="text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+            <KeyRound className="h-7 w-7 text-primary" />
+          </div>
+          <h1 className="text-2xl font-bold text-foreground">
+            Set Your Password
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            You must set a new password before continuing.
+          </p>
+        </div>
+
+        <Card>
+          <CardContent className="pt-6">
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Current Password</Label>
+                <Input
+                  data-ocid="force_change.current_password.input"
+                  type="password"
+                  value={currentPw}
+                  onChange={(e) => setCurrentPw(e.target.value)}
+                  placeholder="Your current password"
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>New Password</Label>
+                <Input
+                  data-ocid="force_change.new_password.input"
+                  type="password"
+                  value={newPw}
+                  onChange={(e) => setNewPw(e.target.value)}
+                  placeholder="Choose a strong password"
+                  autoComplete="new-password"
+                  required
+                />
+                {newPw.length > 0 && (
+                  <PasswordStrengthChecklist password={newPw} />
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>Confirm New Password</Label>
+                <Input
+                  data-ocid="force_change.confirm_password.input"
+                  type="password"
+                  value={confirmPw}
+                  onChange={(e) => setConfirmPw(e.target.value)}
+                  placeholder="Repeat new password"
+                  autoComplete="new-password"
+                  required
+                />
+                {confirmPw.length > 0 && (
+                  <p
+                    className={`text-xs mt-1 flex items-center gap-1 ${passwordsMatch ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"}`}
+                  >
+                    {passwordsMatch ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5" />
+                    )}
+                    {passwordsMatch
+                      ? "Passwords match"
+                      : "Passwords do not match"}
+                  </p>
+                )}
+              </div>
+              {error && (
+                <p
+                  data-ocid="force_change.error_state"
+                  className="text-sm text-destructive"
+                >
+                  {error}
+                </p>
+              )}
+              <Button
+                data-ocid="force_change.submit_button"
+                type="submit"
+                className="w-full"
+                disabled={!canSubmit || saving}
+              >
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {saving ? "Saving..." : "Set Password & Continue"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
@@ -1861,6 +2002,9 @@ function SettingsPage({ session }: { session: Session }) {
                 placeholder="New password"
                 required
               />
+              {newPw.length > 0 && (
+                <PasswordStrengthChecklist password={newPw} />
+              )}
             </div>
             <div className="space-y-2">
               <Label>Confirm New Password</Label>
@@ -1872,11 +2016,27 @@ function SettingsPage({ session }: { session: Session }) {
                 placeholder="Confirm new password"
                 required
               />
+              {confirmPw.length > 0 && (
+                <p
+                  className={`text-xs mt-1 flex items-center gap-1 ${newPw === confirmPw ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"}`}
+                >
+                  {newPw === confirmPw ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5" />
+                  )}
+                  {newPw === confirmPw
+                    ? "Passwords match"
+                    : "Passwords do not match"}
+                </p>
+              )}
             </div>
             <Button
               data-ocid="settings.change_password.submit_button"
               type="submit"
-              disabled={saving}
+              disabled={
+                saving || !isPasswordStrong(newPw) || newPw !== confirmPw
+              }
             >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Change Password
@@ -1906,6 +2066,23 @@ export default function App() {
           onLogin={(s) => {
             setSession(s);
             setPage("dashboard");
+          }}
+        />
+        <Toaster />
+      </>
+    );
+  }
+
+  if (session.userInfo.mustChangePassword) {
+    return (
+      <>
+        <ForceChangePasswordPage
+          session={session}
+          onSuccess={(newPassword) => {
+            setSession({
+              userInfo: { ...session.userInfo, mustChangePassword: false },
+              password: newPassword,
+            });
           }}
         />
         <Toaster />

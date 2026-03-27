@@ -3,6 +3,7 @@ export interface UserInfo {
   name: string;
   phone: string;
   role: UserRole;
+  mustChangePassword: boolean;
 }
 
 export enum UserRole {
