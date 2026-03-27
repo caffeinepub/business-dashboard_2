@@ -252,17 +252,25 @@ actor {
   };
 
   public shared func initializeDefaults() : async () {
-    switch (users.get("superadmin")) {
-      case (?_) { /* already exists */ };
-      case (null) {
-        users.add("superadmin", {
-          username = "superadmin";
-          password = "Admin@1234";
-          name     = "Super Admin";
-          phone    = "";
-          role     = #superAdmin;
-        });
-        mustChangePw.add("superadmin", true);
+    // Seed default users if they don't exist
+    let defaults : [(Text, Text, Text, { #superAdmin; #admin; #dataOperator; #employee })] = [
+      ("superadmin", "admin123", "Super Admin", #superAdmin),
+      ("admin",      "admin123", "Admin",       #admin),
+      ("operator",   "op123",    "Data Operator", #dataOperator),
+      ("employee",   "emp123",   "Employee",    #employee),
+    ];
+    for ((uname, pw, fullName, role) in defaults.vals()) {
+      switch (users.get(uname)) {
+        case (?_) { /* already exists, do not overwrite */ };
+        case (null) {
+          users.add(uname, {
+            username = uname;
+            password = pw;
+            name     = fullName;
+            phone    = "";
+            role     = role;
+          });
+        };
       };
     };
   };
