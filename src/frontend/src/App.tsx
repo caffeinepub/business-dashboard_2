@@ -1,4 +1,5 @@
 import { type UserInfo, UserRole } from "@/backend";
+import { useCamera } from "@/camera/useCamera";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,6 +52,7 @@ import {
   BarChart2,
   Briefcase,
   CalendarCheck,
+  Camera,
   CheckCircle2,
   KeyRound,
   LayoutDashboard,
@@ -64,7 +66,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 // ── Role helpers ────────────────────────────────────────────────────────────
@@ -249,6 +251,137 @@ function isAdmin(role: UserRole): boolean {
   );
 }
 
+// ── Camera Check-In Modal ─────────────────────────────────────────────────
+function CameraCheckInModal({
+  open,
+  onClose,
+  onCapture,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCapture: () => Promise<void>;
+}) {
+  const {
+    isActive,
+    isSupported,
+    error,
+    isLoading,
+    startCamera,
+    stopCamera,
+    capturePhoto,
+    videoRef,
+    canvasRef,
+  } = useCamera({ facingMode: "environment" });
+  const capturingRef = useRef(false);
+
+  useEffect(() => {
+    if (open) {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+  }, [open, startCamera, stopCamera]);
+
+  const handleTakePhoto = async () => {
+    if (capturingRef.current) return;
+    capturingRef.current = true;
+    try {
+      await capturePhoto(); // capture photo (optional metadata)
+      await onCapture(); // auto-submit attendance
+    } finally {
+      capturingRef.current = false;
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+    >
+      <DialogContent
+        className="sm:max-w-md"
+        data-ocid="attendance.camera.modal"
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Camera className="h-5 w-5" />
+            Camera Check-In
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {isSupported === false ? (
+            <div
+              className="rounded-lg bg-destructive/10 p-4 text-destructive text-sm"
+              data-ocid="attendance.camera.error_state"
+            >
+              Camera is not supported in this browser.
+            </div>
+          ) : (
+            <>
+              <div
+                className="relative rounded-lg overflow-hidden bg-black"
+                style={{ aspectRatio: "4/3" }}
+              >
+                <video
+                  ref={videoRef}
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+                {isLoading && (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center bg-black/60"
+                    data-ocid="attendance.camera.loading_state"
+                  >
+                    <Loader2 className="h-8 w-8 animate-spin text-white" />
+                  </div>
+                )}
+                {error && (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center bg-black/80 p-4"
+                    data-ocid="attendance.camera.error_state"
+                  >
+                    <p className="text-white text-sm text-center">
+                      {error.message}
+                    </p>
+                  </div>
+                )}
+              </div>
+              <canvas ref={canvasRef} style={{ display: "none" }} />
+            </>
+          )}
+        </div>
+
+        <DialogFooter className="flex gap-2 sm:justify-between">
+          <Button
+            variant="outline"
+            onClick={onClose}
+            data-ocid="attendance.camera.cancel_button"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleTakePhoto}
+            disabled={!isActive || isLoading}
+            className="bg-green-600 hover:bg-green-700 text-white"
+            data-ocid="attendance.camera.submit_button"
+          >
+            {isLoading ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Camera className="mr-2 h-4 w-4" />
+            )}
+            Take Photo & Check In
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Attendance Page ───────────────────────────────────────────────────────────
 function AttendancePage({ session }: { session: Session }) {
   const { actor } = useActor();
@@ -259,6 +392,7 @@ function AttendancePage({ session }: { session: Session }) {
   const [myLoading, setMyLoading] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   // Admin state
   const [adminTab, setAdminTab] = useState<"daily" | "monthly">("daily");
@@ -492,14 +626,14 @@ function AttendancePage({ session }: { session: Session }) {
               <div className="flex gap-3 flex-wrap">
                 <Button
                   data-ocid="attendance.checkin.button"
-                  onClick={handleCheckIn}
+                  onClick={() => setCameraOpen(true)}
                   disabled={!canCheckIn || checkingIn || !!alreadyPresent}
                   className="bg-green-600 hover:bg-green-700 text-white"
                 >
                   {checkingIn ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
-                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    <Camera className="mr-2 h-4 w-4" />
                   )}
                   Check In
                 </Button>
@@ -521,6 +655,16 @@ function AttendancePage({ session }: { session: Session }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Camera Check-In Modal */}
+      <CameraCheckInModal
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={async () => {
+          setCameraOpen(false);
+          await handleCheckIn();
+        }}
+      />
 
       {/* Admin Panel */}
       {admin && (

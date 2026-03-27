@@ -25,6 +25,16 @@ export interface InquiryInfo {
   status: InquiryStatus;
   createdAt: bigint;
 }
+export type AttendanceStatus = { 'present': null } | { 'absent': null } | { 'checkedIn': null };
+export interface AttendanceRecord {
+  id: bigint;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  checkIn: [] | [bigint];
+  checkOut: [] | [bigint];
+  status: AttendanceStatus;
+}
 export interface _SERVICE {
   authenticate: ActorMethod<[string, string], [] | [UserInfo]>;
   listUsers: ActorMethod<[string, string], Array<UserInfo>>;
@@ -42,6 +52,12 @@ export interface _SERVICE {
   addInquiry: ActorMethod<[string, string, string, string, string], bigint>;
   updateInquiryStatus: ActorMethod<[string, string, bigint, InquiryStatus], undefined>;
   deleteInquiry: ActorMethod<[string, string, bigint], undefined>;
+  checkIn: ActorMethod<[string, string, string], AttendanceRecord>;
+  checkOut: ActorMethod<[string, string, string], AttendanceRecord>;
+  getMyAttendance: ActorMethod<[string, string, string], [] | [AttendanceRecord]>;
+  getAttendanceByDate: ActorMethod<[string, string, string], Array<AttendanceRecord>>;
+  getAllAttendance: ActorMethod<[string, string], Array<AttendanceRecord>>;
+  markAbsent: ActorMethod<[string, string, string, string, string], AttendanceRecord>;
 }
 export declare const idlFactory: IDL.InterfaceFactory;
 export declare const init: (args: { IDL: typeof IDL }) => IDL.Type[];
